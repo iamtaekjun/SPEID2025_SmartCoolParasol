@@ -1,0 +1,47 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# PlatformIO
+.pio
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+.vscode/settings.json
+
+# Build outputs
+.pioenvs
+.piolibdeps
+.clang_complete
+.gcc-flags.json
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Test files (선택적)
+# led_test.cpp
+# buzzer_test_standalone.cpp
+
+# Documentation backups
+# *.md.bak
