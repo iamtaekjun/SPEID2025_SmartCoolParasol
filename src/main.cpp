@@ -55,7 +55,7 @@ struct SystemStatus {
 } status;
 
 // 임계값 설정 (실제 환경에 맞게 조정 필요)
-const float HEAT_THRESHOLD = 25;      // 더위 경고 온도 (°C) - 테스트용 낮춤
+const float HEAT_THRESHOLD = 28;      // 더위 경고 온도 (°C) - 테스트용 낮춤
 const int RAIN_THRESHOLD = 700;       // 빗물 감지 임계값 - 이 값 이하에서 감지
 const int UV_THRESHOLD = 600;         // UV 임계값 (0-1023)
 const int WATER_LOW_THRESHOLD = 100;  // 물탱크 최저 수위 (0-1023)
@@ -316,7 +316,7 @@ void checkHeatDetection() {
                 Serial.println("  💧 미스트 분사 시작");
             }
         }
-    } else if (sensors.temperature <= HEAT_THRESHOLD - 2 && status.heatAlert) {
+    } else if (sensors.temperature <= HEAT_THRESHOLD && status.heatAlert) {
         // 더위 경고 해제
         Serial.println("❄ 온도 정상화, 냉각 모드 정지");
         status.heatAlert = false;
