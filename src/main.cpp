@@ -8,13 +8,11 @@
  */
 
 #include <Arduino.h>
-#include <DHT.h>
 #include <Servo.h>
 
 // ============= 핀 정의 =============
 // 센서 레이어 (Sensor Layer)
-#define DHT_PIN 2 // 온습도 센서 (디지털)
-#define DHT_TYPE DHT22
+#define LM35_PIN A4         // LM35 출력 Vout 연결 핀(아날로그)
 #define RAIN_SENSOR_PIN A0  // 빗물 감지 센서 (아날로그)
 #define UV_SENSOR_PIN A1    // UV 센서 (아날로그)
 #define LIGHT_SENSOR_PIN A2 // 조도 센서 (아날로그)
@@ -31,7 +29,6 @@
 #define DRAIN_VALVE_PIN 4 // 배수 밸브
 
 // ============= 객체 초기화 =============
-DHT dht(DHT_PIN, DHT_TYPE);
 Servo parasolServo;
 
 // ============= 전역 변수 =============
@@ -58,7 +55,7 @@ struct SystemStatus {
 } status;
 
 // 임계값 설정 (실제 환경에 맞게 조정 필요)
-const float HEAT_THRESHOLD = 20.0;    // 더위 경고 온도 (°C) - 테스트용 낮춤
+const float HEAT_THRESHOLD = 25;      // 더위 경고 온도 (°C) - 테스트용 낮춤
 const int RAIN_THRESHOLD = 700;       // 빗물 감지 임계값 - 이 값 이하에서 감지
 const int UV_THRESHOLD = 600;         // UV 임계값 (0-1023)
 const int WATER_LOW_THRESHOLD = 100;  // 물탱크 최저 수위 (0-1023)
@@ -91,9 +88,6 @@ void setup() {
     // 핀 모드 설정
     initializePins();
 
-    // 센서 초기화
-    initializeSensors();
-
     // 액추에이터 초기화
     initializeActuators();
 
@@ -106,14 +100,15 @@ void setup() {
 }
 
 void loop() {
-    // 센서 데이터 읽기
-    readAllSensors();
 
-    // 기본 시스템 로직 실행
-    executeBasicLogic();
+    // 상태 출력 (30초마다)
+    if (millis() - status.lastUpdate > 30000) {
+        // 센서 데이터 읽기
+        readAllSensors();
 
-    // 상태 출력 (3초마다)
-    if (millis() - status.lastUpdate > 3000) {
+        // 기본 시스템 로직 실행
+        executeBasicLogic();
+
         printSystemStatus();
         status.lastUpdate = millis();
     }
@@ -167,23 +162,6 @@ void initializePins() {
     Serial.println("✓ 핀 설정 완료");
 }
 
-void initializeSensors() {
-    Serial.println("센서 초기화...");
-
-    // DHT22 온습도 센서 시작
-    dht.begin();
-    Serial.println("  - DHT22 온습도 센서 초기화");
-
-    // 센서 안정화 대기 제거 - 바로 넘어감
-    // delay(2000); // 이 줄 제거
-
-    // 초기 센서 값 읽기 테스트 제거 - loop에서 수행
-    // 첫 읽기는 loop()에서 할 예정
-    sensors.isValid = false; // 일단 무효로 설정
-
-    Serial.println("✓ 센서 초기화 완료");
-}
-
 void initializeActuators() {
     Serial.println("액추에이터 초기화...");
 
@@ -217,21 +195,16 @@ void performHardwareTest() {
     // 센서 연결 상태 확인
     Serial.println("1. 센서 연결 상태:");
 
-    // DHT22 테스트
-    float temp = dht.readTemperature();
-    float hum = dht.readHumidity();
-    if (!isnan(temp) && !isnan(hum)) {
-        Serial.println("  ✓ DHT22 온습도 센서: 정상");
-        Serial.print("    현재 온도: ");
-        Serial.print(temp, 1);
-        Serial.print("°C, 습도: ");
-        Serial.print(hum, 1);
-        Serial.println("%");
-    } else {
-        Serial.println("  ✗ DHT22 온습도 센서: 오류");
-    }
+    // 추가: LM35 테스트
+    int raw = analogRead(LM35_PIN);
+    float vref = 5.0;
+    float voltage = raw * (vref / 1023.0);
+    float tempC = voltage * 100.0; // LM35: 10mV/°C → 0.01V = 1°C
+    Serial.print("  ✓ LM35 온도 센서: ");
+    Serial.print(tempC, 1);
+    Serial.println("°C");
 
-    // 아날로그 센서들 테스트
+    // 기존 아날로그 센서들 테스트
     int rainVal = analogRead(RAIN_SENSOR_PIN);
     int uvVal = analogRead(UV_SENSOR_PIN);
     int lightVal = analogRead(LIGHT_SENSOR_PIN);
@@ -262,9 +235,14 @@ void performHardwareTest() {
 }
 
 void readAllSensors() {
-    // DHT22 온습도 센서
-    sensors.temperature = dht.readTemperature();
-    sensors.humidity = dht.readHumidity();
+    // LM35 온도
+    int raw = analogRead(LM35_PIN);
+    float vref = 5.0; // 3.3V 보드면 3.3으로
+    float voltage = raw * (vref / 1023.0);
+    sensors.temperature = voltage * 100.0; // °C
+
+    // 습도는 사용 안 함
+    sensors.humidity = NAN;
 
     // 아날로그 센서들
     sensors.rainLevel = analogRead(RAIN_SENSOR_PIN);
@@ -272,15 +250,8 @@ void readAllSensors() {
     sensors.lightLevel = analogRead(LIGHT_SENSOR_PIN);
     sensors.waterLevel = analogRead(WATER_LEVEL_PIN);
 
-    // 센서 유효성 검사
-    if (isnan(sensors.temperature) || isnan(sensors.humidity)) {
-        sensors.isValid = false;
-        // 기본값 설정
-        sensors.temperature = 25.0;
-        sensors.humidity = 50.0;
-    } else {
-        sensors.isValid = true;
-    }
+    // 유효성: LM35는 값이 항상 들어오므로 true
+    sensors.isValid = true;
 }
 
 void executeBasicLogic() {
@@ -304,6 +275,7 @@ void checkRainDetection() {
         Serial.println("🌧 빗물 감지! 수집 모드 시작");
         status.rainCollection = true;
         status.operationMode = 1;
+        status.coolingActive = 0;
 
         deployParasol();
         digitalWrite(LED_PIN, HIGH); // LED 켜기
@@ -356,6 +328,13 @@ void checkHeatDetection() {
             retractParasol();
             status.operationMode = 0;
         }
+    } else if (sensors.temperature > HEAT_THRESHOLD && status.heatAlert && status.rainCollection == 0) {
+        Serial.println("🔥비가 그침, 냉각 모드 시작");
+        status.heatAlert = true;
+        status.coolingActive = true;
+        if (status.operationMode != 1) {
+            status.operationMode = 2;
+        }
     }
 }
 
@@ -400,9 +379,7 @@ void printSystemStatus() {
     // 센서 상태
     Serial.print("온도: ");
     Serial.print(sensors.temperature, 1);
-    Serial.print("°C | 습도: ");
-    Serial.print(sensors.humidity, 1);
-    Serial.println("%");
+    Serial.print("°C");
 
     Serial.print("빗물: ");
     Serial.print(sensors.rainLevel);
