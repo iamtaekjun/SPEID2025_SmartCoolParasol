@@ -59,7 +59,7 @@ struct SystemStatus {
 
 // 임계값 설정 (실제 환경에 맞게 조정 필요)
 const float HEAT_THRESHOLD = 20.0;    // 더위 경고 온도 (°C) - 테스트용 낮춤
-const int RAIN_THRESHOLD = 500;       // 빗물 감지 임계값 (0-1023) - 노이즈 방지용 상향
+const int RAIN_THRESHOLD = 700;       // 빗물 감지 임계값 - 이 값 이하에서 감지
 const int UV_THRESHOLD = 600;         // UV 임계값 (0-1023)
 const int WATER_LOW_THRESHOLD = 100;  // 물탱크 최저 수위 (0-1023)
 const int WATER_FULL_THRESHOLD = 800; // 물탱크 만수위 (0-1023)
@@ -298,7 +298,8 @@ void executeBasicLogic() {
 }
 
 void checkRainDetection() {
-  if (sensors.rainLevel > RAIN_THRESHOLD && !status.rainCollection) {
+  // 빗물 센서 로직 수정: 값이 낮아지면 빗물 감지
+  if (sensors.rainLevel < RAIN_THRESHOLD && !status.rainCollection) {
     // 빗물 감지 시작
     Serial.println("🌧 빗물 감지! 수집 모드 시작");
     status.rainCollection = true;
@@ -307,7 +308,7 @@ void checkRainDetection() {
     deployParasol();
     digitalWrite(LED_PIN, HIGH); // LED 켜기
     
-  } else if (sensors.rainLevel <= RAIN_THRESHOLD && status.rainCollection) {
+  } else if (sensors.rainLevel >= RAIN_THRESHOLD && status.rainCollection) {
     // 빗물 감지 종료
     Serial.println("☀ 빗물 종료, 수집 모드 정지");
     status.rainCollection = false;

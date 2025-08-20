@@ -11,7 +11,7 @@
 #define BUZZER_PIN 10
 
 // 임계값 설정 (테스트하면서 조정)
-int RAIN_THRESHOLD = 300;  // 기본값, 실험으로 조정 필요
+int RAIN_THRESHOLD = 700;  // 700 이하면 빗물 감지 (값이 낮아질 때)
 
 void setup() {
   Serial.begin(9600);
@@ -43,21 +43,33 @@ void loop() {
   // 빗물 센서 값 읽기 (0-1023)
   int rainValue = analogRead(RAIN_SENSOR_PIN);
   
+  // 현재 빗물 감지 상태 확인
+  bool currentRainDetected = (rainValue < RAIN_THRESHOLD);
+  
+  // 이전 상태와 비교하여 변화 감지
+  static bool previousRainDetected = false;
+  
+  // 상태 변화 시 메시지 출력
+  if (currentRainDetected && !previousRainDetected) {
+    Serial.println("\n🌧 빗물 감지! 수집 모드 시작");
+    tone(BUZZER_PIN, 1000, 300); // 긴 경고음
+  } else if (!currentRainDetected && previousRainDetected) {
+    Serial.println("\n☀ 빗물 감지 종료! 수집 모드 정지");
+    tone(BUZZER_PIN, 500, 200); // 낮은 음으로 종료 알림
+  }
+  
   // 시리얼 모니터에 값 표시
   Serial.print("빗물 센서: ");
   Serial.print(rainValue);
   Serial.print(" | 임계값: ");
   Serial.print(RAIN_THRESHOLD);
   
-  // 임계값과 비교
-  if (rainValue > RAIN_THRESHOLD) {
-    Serial.print(" | 상태: 🌧 빗물 감지!");
+  // 임계값과 비교 (값이 낮아지면 빗물 감지)
+  if (currentRainDetected) {
+    Serial.print(" | 상태: 🌧 빗물 감지 중!");
     
     // LED 켜기
     digitalWrite(LED_PIN, HIGH);
-    
-    // 부저 울리기 (짧게)
-    tone(BUZZER_PIN, 1000, 100);
     
   } else {
     Serial.print(" | 상태: ☀ 건조");
@@ -68,18 +80,21 @@ void loop() {
   
   // 센서 상태 분석
   if (rainValue < 50) {
-    Serial.println(" [매우 건조]");
+    Serial.println(" [물에 완전 잠김]");
   } else if (rainValue < 200) {
-    Serial.println(" [건조]");
-  } else if (rainValue < 400) {
-    Serial.println(" [약간 습함]");
-  } else if (rainValue < 600) {
-    Serial.println(" [습함]");
-  } else if (rainValue < 800) {
     Serial.println(" [매우 습함]");
+  } else if (rainValue < 400) {
+    Serial.println(" [습함]");
+  } else if (rainValue < 600) {
+    Serial.println(" [약간 습함]");
+  } else if (rainValue < 800) {
+    Serial.println(" [건조]");
   } else {
-    Serial.println(" [물에 잠김]");
+    Serial.println(" [매우 건조]");
   }
+  
+  // 이전 상태 업데이트
+  previousRainDetected = currentRainDetected;
   
   // 임계값 자동 조정 제안
   static int maxValue = 0;
@@ -97,10 +112,11 @@ void loop() {
     Serial.print(" | 최대값: ");
     Serial.println(maxValue);
     
-    // 추천 임계값
-    int recommendedThreshold = minValue + (maxValue - minValue) / 3;
+    // 추천 임계값 (높은 값에서 낮은 값으로 가는 지점)
+    int recommendedThreshold = maxValue - (maxValue - minValue) / 3;
     Serial.print("추천 임계값: ");
-    Serial.println(recommendedThreshold);
+    Serial.print(recommendedThreshold);
+    Serial.println(" (이 값 이하에서 빗물 감지)");
     Serial.println("=====================");
     
     lastInfo = millis();
