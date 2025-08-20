@@ -20,8 +20,6 @@
 
 // 액추에이터 레이어 (Actuator Layer)
 #define SERVO_PIN 9      // 파라솔 구동 서보모터
-#define LED_PIN 13       // 상태 표시 LED (내장 LED 사용)
-#define BUZZER_PIN 10    // 부저
 #define WATER_PUMP_PIN 6 // 물 분사 펌프
 #define MIST_SPRAY_PIN 5 // 미스트 분사
 
@@ -102,7 +100,7 @@ void setup() {
 void loop() {
 
     // 상태 출력 (30초마다)
-    if (millis() - status.lastUpdate > 30000) {
+    if (millis() - status.lastUpdate > 20000) {
         // 센서 데이터 읽기
         readAllSensors();
 
@@ -146,15 +144,11 @@ void initializePins() {
     // DHT_PIN은 DHT 라이브러리가 자동으로 관리하므로 pinMode 설정 안함
 
     // 액추에이터 핀 (출력)
-    pinMode(LED_PIN, OUTPUT);
-    pinMode(BUZZER_PIN, OUTPUT);
     pinMode(WATER_PUMP_PIN, OUTPUT);
     pinMode(MIST_SPRAY_PIN, OUTPUT);
     pinMode(DRAIN_VALVE_PIN, OUTPUT);
 
     // 모든 액추에이터 초기 상태 OFF
-    digitalWrite(LED_PIN, LOW);
-    digitalWrite(BUZZER_PIN, LOW);
     digitalWrite(WATER_PUMP_PIN, LOW);
     digitalWrite(MIST_SPRAY_PIN, LOW);
     digitalWrite(DRAIN_VALVE_PIN, LOW);
@@ -169,22 +163,6 @@ void initializeActuators() {
     parasolServo.attach(SERVO_PIN);
     parasolServo.write(0); // 파라솔 접힌 상태 (0도)
     Serial.println("  - 서보모터: 초기 위치 (0도)");
-
-    // LED 테스트 (깜빡임)
-    Serial.println("  - LED 테스트...");
-    for (int i = 0; i < 3; i++) {
-        digitalWrite(LED_PIN, HIGH);
-        delay(200);
-        digitalWrite(LED_PIN, LOW);
-        delay(200);
-    }
-
-    // 부저 테스트 (짧은 삐소리)
-    Serial.println("  - 부저 테스트...");
-    tone(BUZZER_PIN, 1000, 300);
-    delay(500);
-
-    Serial.println("✓ 액추에이터 초기화 완료");
 }
 
 void performHardwareTest() {
@@ -225,6 +203,10 @@ void performHardwareTest() {
     parasolServo.write(45); // 45도
     delay(1000);
     parasolServo.write(90); // 90도
+    delay(1000);
+    parasolServo.write(135); // 135도
+    delay(1000);
+    parasolServo.write(180); // 108도
     delay(1000);
     parasolServo.write(0); // 원위치
     delay(1000);
@@ -278,7 +260,6 @@ void checkRainDetection() {
         status.coolingActive = 0;
 
         deployParasol();
-        digitalWrite(LED_PIN, HIGH); // LED 켜기
 
     } else if (sensors.rainLevel >= RAIN_THRESHOLD && status.rainCollection) {
         // 빗물 감지 종료
@@ -286,8 +267,8 @@ void checkRainDetection() {
         status.rainCollection = false;
 
         if (!status.heatAlert) {
-            retractParasol();
             status.operationMode = 0;
+            retractParasol();
         } else {
             status.operationMode = 2;
         }
@@ -325,8 +306,8 @@ void checkHeatDetection() {
         digitalWrite(MIST_SPRAY_PIN, LOW);
 
         if (!status.rainCollection) {
-            retractParasol();
             status.operationMode = 0;
+            retractParasol();
         }
     } else if (sensors.temperature > HEAT_THRESHOLD && status.heatAlert && status.rainCollection == 0) {
         Serial.println("🔥비가 그침, 냉각 모드 시작");
@@ -351,25 +332,27 @@ void manageWaterTank() {
         Serial.println("⚠ 물탱크 수위 부족! 냉각 시스템 정지");
         status.coolingActive = false;
         digitalWrite(MIST_SPRAY_PIN, LOW);
-        tone(BUZZER_PIN, 500, 1000); // 경고음
     }
 }
 
 void deployParasol() {
-    if (!status.parasolDeployed) {
+    if (status.operationMode != 0) {
         Serial.println("☂ 파라솔 전개 중...");
-        parasolServo.write(90); // 90도로 전개
-        status.parasolDeployed = true;
+        if (status.operationMode == 1) {
+            parasolServo.write(110); // 110도로 전개
+        } else if (status.operationMode == 2) {
+            parasolServo.write(90); // 90도로 전개
+        }
+
         delay(1000); // 서보모터 동작 완료 대기
     }
 }
 
 void retractParasol() {
-    if (status.parasolDeployed) {
+    if (status.operationMode == 0) {
         Serial.println("📦 파라솔 수납 중...");
         parasolServo.write(0); // 0도로 수납
-        status.parasolDeployed = false;
-        delay(1000); // 서보모터 동작 완료 대기
+        delay(1000);           // 서보모터 동작 완료 대기
     }
 }
 
