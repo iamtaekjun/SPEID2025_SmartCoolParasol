@@ -1,9 +1,7 @@
-
-
 /*
- * SmartCool Parasol 시스템 - 초기 하드웨어 테스트
- * 센서 레이어, 제어 레이어, 액추에이터 레이어 기본 구현
- * WiFi 및 웹 기능 제외 - 하드웨어 검증 우선
+ * SmartCool Parasol 시스템 - PP-A285 플로트 스위치 적용
+ * 물 수위 임계치 기반 미스트 분사 제어
+ * 배수 밸브 제거, 단순화된 물 관리 시스템
  * PlatformIO 환경용
  */
 
@@ -14,17 +12,14 @@
 // 센서 레이어 (Sensor Layer)
 #define LM35_PIN A4         // LM35 출력 Vout 연결 핀(아날로그)
 #define RAIN_SENSOR_PIN A0  // 빗물 감지 센서 (아날로그)
-#define UV_SENSOR_PIN A1    // UV 센서 (아날로그)
-#define LIGHT_SENSOR_PIN A2 // 조도 센서 (아날로그)
-#define WATER_LEVEL_PIN A3  // 물탱크 수위 센서 (아날로그)
+#define WATER_LEVEL_PIN A3  // PP-A285 물탱크 수위 센서 (디지털 플로트 스위치)
 
 // 액추에이터 레이어 (Actuator Layer)
 #define SERVO_PIN 9      // 파라솔 구동 서보모터
 #define WATER_PUMP_PIN 6 // 물 분사 펌프
 #define MIST_SPRAY_PIN 5 // 미스트 분사
 
-// 인프라 레이어 (Infrastructure Layer)
-#define DRAIN_VALVE_PIN 4 // 배수 밸브
+// 인프라 레이어 제거 - 배수는 구멍으로 자연 배수
 
 // ============= 객체 초기화 =============
 Servo parasolServo;
@@ -35,9 +30,8 @@ struct SensorData {
     float temperature;
     float humidity;
     int rainLevel;
-    int uvLevel;
     int lightLevel;
-    int waterLevel;
+    bool waterLevelOK;     // PP-A285 플로트 스위치 상태 (충분한 물 = true)
     bool isValid;
 } sensors;
 
@@ -48,6 +42,7 @@ struct SystemStatus {
     bool rainCollection;
     bool heatAlert;
     bool systemReady;
+    bool waterInsufficientAlert;
     unsigned long lastUpdate;
     int operationMode; // 0: 대기, 1: 빗물감지, 2: 더위감지/냉각
 } status;
@@ -56,8 +51,6 @@ struct SystemStatus {
 const float HEAT_THRESHOLD = 28;      // 더위 경고 온도 (°C) - 테스트용 낮춤
 const int RAIN_THRESHOLD = 700;       // 빗물 감지 임계값 - 이 값 이하에서 감지
 const int UV_THRESHOLD = 600;         // UV 임계값 (0-1023)
-const int WATER_LOW_THRESHOLD = 100;  // 물탱크 최저 수위 (0-1023)
-const int WATER_FULL_THRESHOLD = 800; // 물탱크 만수위 (0-1023)
 
 // ============= 함수 선언 =============
 void initializeSystem();
@@ -69,7 +62,7 @@ void readAllSensors();
 void executeBasicLogic();
 void checkRainDetection();
 void checkHeatDetection();
-void manageWaterTank();
+void checkWaterLevel();
 void deployParasol();
 void retractParasol();
 void printSystemStatus();
@@ -77,7 +70,7 @@ void printSystemStatus();
 void setup() {
     Serial.begin(9600);
     Serial.println("=== SmartCool Parasol 시스템 초기화 ===");
-    Serial.println("하드웨어 테스트 모드");
+    Serial.println("PP-A285 플로트 스위치 기반 물 수위 제어");
     Serial.println();
 
     // 시스템 초기화
@@ -99,7 +92,7 @@ void setup() {
 
 void loop() {
 
-    // 상태 출력 (30초마다)
+    // 상태 출력 (20초마다)
     if (millis() - status.lastUpdate > 20000) {
         // 센서 데이터 읽기
         readAllSensors();
@@ -123,6 +116,7 @@ void initializeSystem() {
     status.rainCollection = false;
     status.heatAlert = false;
     status.systemReady = false;
+    status.waterInsufficientAlert = false;
     status.lastUpdate = millis();
     status.operationMode = 0;
 
@@ -130,9 +124,8 @@ void initializeSystem() {
     sensors.temperature = 0.0;
     sensors.humidity = 0.0;
     sensors.rainLevel = 0;
-    sensors.uvLevel = 0;
     sensors.lightLevel = 0;
-    sensors.waterLevel = 0;
+    sensors.waterLevelOK = false;
     sensors.isValid = false;
 
     Serial.println("✓ 시스템 상태 초기화 완료");
@@ -141,17 +134,16 @@ void initializeSystem() {
 void initializePins() {
     Serial.println("핀 모드 설정...");
 
-    // DHT_PIN은 DHT 라이브러리가 자동으로 관리하므로 pinMode 설정 안함
+    // PP-A285 플로트 스위치 핀 설정 (INPUT_PULLUP 사용)
+    pinMode(WATER_LEVEL_PIN, INPUT_PULLUP);
 
     // 액추에이터 핀 (출력)
     pinMode(WATER_PUMP_PIN, OUTPUT);
     pinMode(MIST_SPRAY_PIN, OUTPUT);
-    pinMode(DRAIN_VALVE_PIN, OUTPUT);
 
     // 모든 액추에이터 초기 상태 OFF
     digitalWrite(WATER_PUMP_PIN, LOW);
     digitalWrite(MIST_SPRAY_PIN, LOW);
-    digitalWrite(DRAIN_VALVE_PIN, LOW);
 
     Serial.println("✓ 핀 설정 완료");
 }
@@ -173,7 +165,7 @@ void performHardwareTest() {
     // 센서 연결 상태 확인
     Serial.println("1. 센서 연결 상태:");
 
-    // 추가: LM35 테스트
+    // LM35 테스트
     int raw = analogRead(LM35_PIN);
     float vref = 5.0;
     float voltage = raw * (vref / 1023.0);
@@ -182,20 +174,15 @@ void performHardwareTest() {
     Serial.print(tempC, 1);
     Serial.println("°C");
 
-    // 기존 아날로그 센서들 테스트
+    // 빗물 센서 테스트
     int rainVal = analogRead(RAIN_SENSOR_PIN);
-    int uvVal = analogRead(UV_SENSOR_PIN);
-    int lightVal = analogRead(LIGHT_SENSOR_PIN);
-    int waterVal = analogRead(WATER_LEVEL_PIN);
-
-    Serial.print("  빗물 센서 (A0): ");
+    Serial.print("  ✓ 빗물 센서 (A0): ");
     Serial.println(rainVal);
-    Serial.print("  UV 센서 (A1): ");
-    Serial.println(uvVal);
-    Serial.print("  조도 센서 (A2): ");
-    Serial.println(lightVal);
-    Serial.print("  수위 센서 (A3): ");
-    Serial.println(waterVal);
+
+    // PP-A285 플로트 스위치 테스트
+    bool waterOK = !digitalRead(WATER_LEVEL_PIN); // LOW = 물 충분
+    Serial.print("  ✓ PP-A285 플로트 스위치: ");
+    Serial.println(waterOK ? "물 충분" : "물 부족");
 
     // 액추에이터 테스트
     Serial.println("\n2. 액추에이터 테스트:");
@@ -206,11 +193,18 @@ void performHardwareTest() {
     delay(1000);
     parasolServo.write(135); // 135도
     delay(1000);
-    parasolServo.write(180); // 108도
+    parasolServo.write(180); // 180도
     delay(1000);
     parasolServo.write(0); // 원위치
     delay(1000);
     Serial.println("  ✓ 서보모터 테스트 완료");
+
+    // 미스트 분사 시스템 간단 테스트
+    Serial.println("  미스트 분사 시스템 테스트...");
+    digitalWrite(MIST_SPRAY_PIN, HIGH);
+    delay(500);
+    digitalWrite(MIST_SPRAY_PIN, LOW);
+    Serial.println("  ✓ 미스트 분사 테스트 완료");
 
     status.systemReady = true;
     Serial.println("==========================================");
@@ -226,11 +220,11 @@ void readAllSensors() {
     // 습도는 사용 안 함
     sensors.humidity = NAN;
 
-    // 아날로그 센서들
+    // 빗물 센서
     sensors.rainLevel = analogRead(RAIN_SENSOR_PIN);
-    sensors.uvLevel = analogRead(UV_SENSOR_PIN);
-    sensors.lightLevel = analogRead(LIGHT_SENSOR_PIN);
-    sensors.waterLevel = analogRead(WATER_LEVEL_PIN);
+    
+    // PP-A285 플로트 스위치 (LOW = 물 충분, HIGH = 물 부족)
+    sensors.waterLevelOK = !digitalRead(WATER_LEVEL_PIN);
 
     // 유효성: LM35는 값이 항상 들어오므로 true
     sensors.isValid = true;
@@ -246,8 +240,8 @@ void executeBasicLogic() {
     // Activity 2: 더위 감지 로직
     checkHeatDetection();
 
-    // 물탱크 관리
-    manageWaterTank();
+    // 물 수위 체크
+    checkWaterLevel();
 }
 
 void checkRainDetection() {
@@ -290,11 +284,13 @@ void checkHeatDetection() {
 
             deployParasol();
 
-            // 충분한 물이 있을 때만 냉각 시스템 가동
-            if (sensors.waterLevel > WATER_LOW_THRESHOLD && status.operationMode == 2) {
+            // PP-A285로 충분한 물이 있는지 확인
+            if (sensors.waterLevelOK && status.operationMode == 2) {
                 status.coolingActive = true;
                 digitalWrite(MIST_SPRAY_PIN, HIGH);
                 Serial.println("  💧 미스트 분사 시작");
+            } else if (!sensors.waterLevelOK) {
+                Serial.println("  ⚠ 물 부족으로 미스트 분사 불가");
             }
         }
     } else if (sensors.temperature <= HEAT_THRESHOLD && status.heatAlert) {
@@ -319,19 +315,28 @@ void checkHeatDetection() {
     }
 }
 
-void manageWaterTank() {
-    // 물탱크 만수위 체크
-    if (sensors.waterLevel > WATER_FULL_THRESHOLD) {
-        digitalWrite(DRAIN_VALVE_PIN, HIGH); // 배수 밸브 열기
-    } else if (sensors.waterLevel < WATER_FULL_THRESHOLD - 50) {
-        digitalWrite(DRAIN_VALVE_PIN, LOW); // 배수 밸브 닫기
-    }
-
-    // 물 부족 시 냉각 시스템 정지
-    if (sensors.waterLevel < WATER_LOW_THRESHOLD && status.coolingActive) {
-        Serial.println("⚠ 물탱크 수위 부족! 냉각 시스템 정지");
-        status.coolingActive = false;
-        digitalWrite(MIST_SPRAY_PIN, LOW);
+void checkWaterLevel() {
+    // PP-A285 기반 물 수위 체크
+    if (!sensors.waterLevelOK && !status.waterInsufficientAlert) {
+        Serial.println("⚠ 물탱크 수위 부족 경고!");
+        status.waterInsufficientAlert = true;
+        
+        // 냉각 시스템이 동작 중이면 정지
+        if (status.coolingActive) {
+            Serial.println("  💧 미스트 분사 정지");
+            status.coolingActive = false;
+            digitalWrite(MIST_SPRAY_PIN, LOW);
+        }
+    } else if (sensors.waterLevelOK && status.waterInsufficientAlert) {
+        Serial.println("✓ 물탱크 수위 회복");
+        status.waterInsufficientAlert = false;
+        
+        // 더위 대응 모드이고 냉각이 필요하면 미스트 재시작
+        if (status.heatAlert && status.operationMode == 2 && !status.coolingActive) {
+            status.coolingActive = true;
+            digitalWrite(MIST_SPRAY_PIN, HIGH);
+            Serial.println("  💧 미스트 분사 재시작");
+        }
     }
 }
 
@@ -339,12 +344,13 @@ void deployParasol() {
     if (status.operationMode != 0) {
         Serial.println("☂ 파라솔 전개 중...");
         if (status.operationMode == 1) {
-            parasolServo.write(110); // 110도로 전개
+            parasolServo.write(110); // 빗물 수집용 각도
         } else if (status.operationMode == 2) {
-            parasolServo.write(90); // 90도로 전개
+            parasolServo.write(90);  // 차양용 각도
         }
-
+        
         delay(1000); // 서보모터 동작 완료 대기
+        status.parasolDeployed = true;
     }
 }
 
@@ -353,6 +359,7 @@ void retractParasol() {
         Serial.println("📦 파라솔 수납 중...");
         parasolServo.write(0); // 0도로 수납
         delay(1000);           // 서보모터 동작 완료 대기
+        status.parasolDeployed = false;
     }
 }
 
@@ -362,21 +369,18 @@ void printSystemStatus() {
     // 센서 상태
     Serial.print("온도: ");
     Serial.print(sensors.temperature, 1);
-    Serial.print("°C");
-
-    Serial.print("빗물: ");
+    Serial.print("°C | 빗물: ");
     Serial.print(sensors.rainLevel);
-    Serial.print(" | UV: ");
-    Serial.print(sensors.uvLevel);
-    Serial.print(" | 조도: ");
-    Serial.println(sensors.lightLevel);
+    Serial.print(" | 물탱크: ");
+    Serial.print(sensors.waterLevelOK ? "충분" : "부족");
+    Serial.println();
 
-    Serial.print("물탱크: ");
-    Serial.print(sensors.waterLevel);
-    Serial.print(" | 파라솔: ");
+    Serial.print("파라솔: ");
     Serial.print(status.parasolDeployed ? "전개" : "수납");
     Serial.print(" | 냉각: ");
-    Serial.println(status.coolingActive ? "ON" : "OFF");
+    Serial.print(status.coolingActive ? "ON" : "OFF");
+    Serial.print(" | 물부족경고: ");
+    Serial.println(status.waterInsufficientAlert ? "ON" : "OFF");
 
     // 동작 모드
     Serial.print("모드: ");
@@ -394,6 +398,14 @@ void printSystemStatus() {
         Serial.println("알 수 없음");
         break;
     }
+
+    // PP-A285 세부 정보
+    Serial.print("PP-A285 상태: ");
+    bool currentSwitchState = digitalRead(WATER_LEVEL_PIN);
+    Serial.print("Raw=");
+    Serial.print(currentSwitchState ? "HIGH" : "LOW");
+    Serial.print(" → ");
+    Serial.println(sensors.waterLevelOK ? "물 충분" : "물 부족");
 
     // 센서 상태
     Serial.print("센서 상태: ");
